@@ -99,4 +99,53 @@ class BookingServiceTest {
         assertEquals(Seat.Status.BOOKED, s1.getStatus());
         assertEquals(Seat.Status.BOOKED, s2.getStatus());
     }
+
+    @Test
+    void confirmReservation_userMismatch_throws() {
+        when(redis.opsForValue().get("resv:abc")).thenReturn("10|2|100,101");
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class, () -> {
+            service.confirmReservation("abc", 1L, "PAY123");
+        });
+        assertTrue(ex.getMessage().contains("Reservation does not belong to user"));
+    }
+
+    @Test
+    void reserveSeats_seatNotAvailable_throws() {
+        User user = User.builder().id(1L).email("a@b.com").name("A").build();
+        Event event = Event.builder().id(10L).title("Show").category("Music").city("NYC").eventDateTime(LocalDateTime.now()).build();
+        Seat s1 = Seat.builder().id(100L).event(event).rowLabel("A").seatNumber(1).tier("VIP").price(new BigDecimal("100.00")).status(Seat.Status.HELD).build();
+        when(userRepository.findById(1L)).thenReturn(Optional.of(user));
+        when(eventRepository.findById(10L)).thenReturn(Optional.of(event));
+        when(seatRepository.lockAllByIds(new HashSet<>(Arrays.asList(100L)))).thenReturn(List.of(s1));
+        ReserveRequest req = new ReserveRequest();
+        req.setUserId(1L); req.setEventId(10L); req.setSeatIds(new HashSet<>(Arrays.asList(100L)));
+        assertThrows(IllegalStateException.class, () -> service.reserveSeats(req));
+    }
+
+    @Test
+    void reserveSeats_holdCollision_releasesAcquiredKeys() {
+        User user = User.builder().id(1L).email("a@b.com").name("A").build();
+        Event event = Event.builder().id(10L).title("Show").category("Music").city("NYC").eventDateTime(LocalDateTime.now()).build();
+        Seat s1 = Seat.builder().id(100L).event(event).rowLabel("A").seatNumber(1).tier("VIP").price(new BigDecimal("100.00")).status(Seat.Status.AVAILABLE).build();
+        Seat s2 = Seat.builder().id(101L).event(event).rowLabel("A").seatNumber(2).tier("VIP").price(new BigDecimal("100.00")).status(Seat.Status.AVAILABLE).build();
+        when(userRepository.findById(1L)).thenReturn(Optional.of(user));
+        when(eventRepository.findById(10L)).thenReturn(Optional.of(event));
+        when(seatRepository.lockAllByIds(new HashSet<>(Arrays.asList(100L, 101L)))).thenReturn(List.of(s1, s2));
+        // First seat acquired, second fails
+        when(valueOps.setIfAbsent(startsWith("hold:10:100"), anyString(), any())).thenReturn(true);
+        when(valueOps.setIfAbsent(startsWith("hold:10:101"), anyString(), any())).thenReturn(false);
+        ReserveRequest req = new ReserveRequest();
+        req.setUserId(1L); req.setEventId(10L); req.setSeatIds(new HashSet<>(Arrays.asList(100L, 101L)));
+        assertThrows(IllegalStateException.class, () -> service.reserveSeats(req));
+        verify(redis).delete(anyCollection());
+    }
+
+    @Test
+    void confirmReservation_missingHoldKey_throws() {
+        when(redis.opsForValue().get("resv:abc")).thenReturn("10|1|100");
+        Seat s = Seat.builder().id(100L).event(Event.builder().id(10L).build()).status(Seat.Status.HELD).build();
+        when(seatRepository.lockAllByIds(new HashSet<>(Arrays.asList(100L)))).thenReturn(List.of(s));
+        when(redis.opsForValue().get("hold:10:100")).thenReturn(null);
+        assertThrows(IllegalStateException.class, () -> service.confirmReservation("abc", 1L, "PAY"));
+    }
 }

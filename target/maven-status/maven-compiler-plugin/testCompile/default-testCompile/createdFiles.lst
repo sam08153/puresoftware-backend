@@ -1,0 +1,6 @@
+com\puresoftware\ticketing\config\DataLoaderTest.class
+com\puresoftware\ticketing\config\RedisConfigTest.class
+com\puresoftware\ticketing\service\EventServiceTest.class
+com\puresoftware\ticketing\web\BookingControllerTest.class
+com\puresoftware\ticketing\web\EventControllerTest.class
+com\puresoftware\ticketing\config\WebConfigTest.class
